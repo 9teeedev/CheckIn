@@ -167,7 +167,9 @@ export default function AdminPage() {
       const res = await fetch(`/api/export?${qs.toString()}`);
       const data = await res.json();
       if (res.ok) {
-        setExpNames(data.names ?? []);
+        const people: Array<{ student_id: string; name: string }> =
+          data.people ?? [];
+        setExpNames(people.map((p) => `${p.student_id}, ${p.name}`));
       } else {
         setExpNames([]);
         setExpMsg(data.error ?? "ดึงรายชื่อไม่สำเร็จ");
@@ -578,7 +580,8 @@ export default function AdminPage() {
             ส่งออกรายชื่อตามช่วงเวลา
           </h2>
           <p className="text-sm text-slate-500">
-            รายชื่อคนที่เช็คอินในช่วงวันที่ที่เลือก (คนละบรรทัด ไม่ซ้ำ) พร้อมวางใส่ wheel
+            รายชื่อ+รหัสนักศึกษาของคนที่เช็คอินในช่วงวันที่ที่เลือก (คนละบรรทัด
+            ไม่ซ้ำ) พร้อมวางใส่ wheel
           </p>
 
           <div className="flex flex-wrap items-end gap-3">

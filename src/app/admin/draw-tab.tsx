@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { playCongrats, playSpinTick, playTick, unlockAudio } from "@/lib/sound";
+import { extractStudentId } from "@/lib/util";
 
 type Person = { student_id: string; name: string };
-type Source = "range" | "all";
+type HistoryEntry = Person & { removed: boolean };
 
 /** แบ่ง 11 หลักเป็นกลุ่ม 2-3-3-3 ตามลำดับการเฉลย */
 const GROUPS: Array<[number, number]> = [
@@ -25,9 +26,12 @@ const REVEAL: Array<{ s: number; e: number; at: number }> = [
 ];
 const NAME_AT = 11200;
 
+/** เก็บวงสุ่ม + ประวัติไว้ใน localStorage รีเฟรชไม่หาย */
+const LS_KEY = "checkin-draw";
+
 const randDigit = () => String(Math.floor(Math.random() * 10));
 
-const todayStr = () => new Date().toLocaleDateString("en-CA");
+const displayName = (p: Person) => p.name || p.student_id;
 
 function IconDice({ className = "" }: { className?: string }) {
   return (
@@ -102,6 +106,40 @@ function IconCheck({ className = "" }: { className?: string }) {
   );
 }
 
+function IconPencil({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+    </svg>
+  );
+}
+
+function IconX({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M18 6 6 18M6 6l12 12" />
+    </svg>
+  );
+}
+
 type Piece = {
   id: number;
   left: number;
@@ -113,16 +151,11 @@ type Piece = {
 const CONFETTI_COLORS = ["#0284c7", "#f59e0b", "#10b981", "#f43f5e", "#8b5cf6"];
 
 export default function DrawTab() {
-  const [source, setSource] = useState<Source>("range");
-  const [dFrom, setDFrom] = useState(todayStr());
-  const [dTo, setDTo] = useState(todayStr());
-  const [dFromTime, setDFromTime] = useState("");
-  const [dToTime, setDToTime] = useState("");
   const [pool, setPool] = useState<Person[]>([]);
-  const [poolLoading, setPoolLoading] = useState(true);
-  const [poolError, setPoolError] = useState<string | null>(null);
-  const [noRepeat, setNoRepeat] = useState(true);
-  const [drawn, setDrawn] = useState<Person[]>([]);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [ready, setReady] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorText, setEditorText] = useState("");
 
   const [rolling, setRolling] = useState(false);
   const [locked, setLocked] = useState(0);
@@ -132,7 +165,7 @@ export default function DrawTab() {
   const [spin, setSpin] = useState("-----------");
   const [confetti, setConfetti] = useState<Piece[]>([]);
   const timers = useRef<number[]>([]);
-  // จำนวนกลุ่มที่ล็อคแล้ว (ref อัปเดตทันที กัน interval ตัวหมุนใช้ค่าเก่าเขียนทับตัวเลขที่ล็อคไปแล้ว)
+  // จำนวนหลักที่ล็อคแล้วนับจากซ้าย (ref อัปเดตทันที กัน interval ตัวหมุนใช้ค่าเก่าเขียนทับ)
   const lockedRef = useRef(0);
 
   useEffect(() => {
@@ -140,60 +173,31 @@ export default function DrawTab() {
     return () => stash.forEach((t) => window.clearTimeout(t));
   }, []);
 
-  const clearTimers = () => {
-    timers.current.forEach((t) => window.clearTimeout(t));
-    timers.current = [];
-  };
-
-  // โหลดกลุ่มคนที่จะสุ่ม: กรองจากประวัติเช็คอิน (เหมือนแท็บส่งออก) หรือทั้งทะเบียน
-  // เมื่อกรองเปลี่ยน วงการสุ่มเปลี่ยน → ล้างประวัติ/ผลเดิม
-  const loadPool = useCallback(async () => {
-    setPoolLoading(true);
-    setPoolError(null);
+  // โหลดวงสุ่มที่เคยกรอกไว้ (หลัง mount กัน hydration mismatch)
+  useEffect(() => {
     try {
-      let rows: Person[];
-      if (source === "all") {
-        const res = await fetch("/api/students");
-        const data = await res.json();
-        rows = data.students ?? [];
-      } else {
-        const qs = new URLSearchParams();
-        if (dFrom) qs.set("from", dFrom);
-        if (dTo) qs.set("to", dTo);
-        if (dFromTime) qs.set("fromTime", dFromTime);
-        if (dToTime) qs.set("toTime", dToTime);
-        const res = await fetch(`/api/export?${qs.toString()}`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? "ดึงรายชื่อไม่สำเร็จ");
-        rows = data.people ?? [];
+      const raw = window.localStorage.getItem(LS_KEY);
+      if (raw) {
+        const data = JSON.parse(raw) as { pool?: Person[]; history?: HistoryEntry[] };
+        if (Array.isArray(data.pool)) setPool(data.pool);
+        if (Array.isArray(data.history)) setHistory(data.history);
       }
-      setPool(rows);
-      setDrawn([]);
-      setWinner(null);
-      setRevealed(false);
-      setStageResult(null);
-      setLocked(0);
-      lockedRef.current = 0;
-      setSpin("-----------");
-    } catch (e) {
-      setPool([]);
-      setPoolError(e instanceof Error ? e.message : "ดึงรายชื่อไม่สำเร็จ");
-    } finally {
-      setPoolLoading(false);
+    } catch {
+      /* localStorage พังก็ปล่อยเป็นวงว่าง */
     }
-  }, [source, dFrom, dTo, dFromTime, dToTime]);
+    setReady(true);
+  }, []);
 
   useEffect(() => {
-    void loadPool();
-  }, [loadPool]);
+    if (!ready) return;
+    try {
+      window.localStorage.setItem(LS_KEY, JSON.stringify({ pool, history }));
+    } catch {
+      /* เต็ม/ถูกห้ามก็ข้าม */
+    }
+  }, [ready, pool, history]);
 
-  const candidates = useMemo(() => {
-    if (!noRepeat) return pool;
-    const seen = new Set(drawn.map((d) => d.student_id));
-    return pool.filter((p) => !seen.has(p.student_id));
-  }, [pool, drawn, noRepeat]);
-
-  // ตัวเลขหมุนในตำแหน่งที่ยังไม่ล็อค (70ms/ครั้ง) — locked = จำนวนหลักที่ล็อคแล้วนับจากซ้าย
+  // ตัวเลขหมุนในตำแหน่งที่ยังไม่ล็อค (70ms/ครั้ง)
   // เสียงแต๊ะตามจังหวะหมุน — เงียบช่วงท้าย (ล็อคครบแล้ว ค้างไว้ก่อนเฉลยชื่อ) ให้เงียบเพิ่มความลุ้น
   useEffect(() => {
     if (!rolling) return;
@@ -220,12 +224,21 @@ export default function DrawTab() {
     timers.current.push(window.setTimeout(() => setConfetti([]), 2600));
   }
 
+  function resetStage() {
+    setWinner(null);
+    setRevealed(false);
+    setStageResult(null);
+    setLocked(0);
+    lockedRef.current = 0;
+    setSpin("-----------");
+  }
+
   function draw() {
-    if (rolling || revealed || candidates.length === 0) return;
+    if (rolling || revealed || pool.length === 0) return;
     unlockAudio();
     clearTimers();
     lockedRef.current = 0;
-    const w = candidates[Math.floor(Math.random() * candidates.length)];
+    const w = pool[Math.floor(Math.random() * pool.length)];
     setWinner(w);
     setRevealed(false);
     setStageResult(null);
@@ -271,60 +284,95 @@ export default function DrawTab() {
     );
   }
 
-  // เก็บไว้: ลงประวัติ + ห้ามสุ่มซ้ำ (ถ้าติ๊ก) แล้วโชว์ชื่อบนเวทีแทน popup
+  const clearTimers = () => {
+    timers.current.forEach((t) => window.clearTimeout(t));
+    timers.current = [];
+  };
+
+  // เก็บไว้ = คนนี้ยังอยู่ในวงสุ่ม (สุ่มซ้ำได้) + จดลงประวัติ
   function keepWinner() {
     if (!winner || !revealed) return;
     const w = winner;
-    setDrawn((d) => [...d, w]);
+    setHistory((h) => [...h, { ...w, removed: false }]);
     setStageResult(w);
     setRevealed(false);
   }
 
-  // ลบออก: ทิ้งรอบนี้ ไม่ลงประวัติ คนนี้ยังอยู่ในวงสุ่มรอบถัดไป
+  // ลบออก = ตัดชื่อนี้ออกจากวงสุ่มถาวร (เหมือน wheelofnames) + จดลงประวัติ
   function dropWinner() {
     if (!winner || !revealed) return;
-    setWinner(null);
-    setRevealed(false);
-    setStageResult(null);
-    setLocked(0);
-    lockedRef.current = 0;
-    setSpin("-----------");
+    const w = winner;
+    setPool((p) => p.filter((x) => x.student_id !== w.student_id));
+    setHistory((h) => [...h, { ...w, removed: true }]);
+    resetStage();
   }
 
-  function clearHistory() {
-    if (rolling) return;
-    setDrawn([]);
+  function removeFromPool(id: string) {
+    if (rolling || revealed) return;
+    setPool((p) => p.filter((x) => x.student_id !== id));
   }
 
-  // Esc ที่ popup = เก็บไว้ (action หลัก ปลอดภัยกว่าลบ)
+  function openEditor() {
+    if (rolling || revealed) return;
+    setEditorText(pool.map((p) => p.student_id).join("\n"));
+    setEditorOpen(true);
+  }
+
+  // บันทึกรายชื่อจาก textarea: บรรทัดละ 1 คน — รับได้ทั้ง "รหัส" และ "รหัส, ชื่อ" (วางจากแท็บส่งออก)
+  // ดึงเลข 11 หลักเป็นรหัส ตัวหลัง comma เป็นชื่อ (ใช้เมื่อไม่มีในทะเบียน) ตัดซ้ำตามรหัส
+  async function savePool() {
+    const lineNames = new Map<string, string>();
+    const ids: string[] = [];
+    for (const raw of editorText.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line) continue;
+      const id = extractStudentId(line);
+      if (!id) continue;
+      const comma = line.indexOf(",");
+      const name = comma >= 0 ? line.slice(comma + 1).trim() : "";
+      if (!lineNames.has(id)) {
+        lineNames.set(id, name);
+        ids.push(id);
+      }
+    }
+    const nameById = new Map<string, string>();
+    try {
+      const res = await fetch("/api/students");
+      const data = await res.json();
+      for (const s of data.students ?? []) {
+        nameById.set(s.student_id, s.name);
+      }
+    } catch {
+      /* ดึงทะเบียนไม่ได้ก็ใช้ชื่อจากบรรทัดที่วาง หรือโชว์รหัสแทน */
+    }
+    setPool(
+      ids.map((id) => ({
+        student_id: id,
+        name: nameById.get(id) || lineNames.get(id) || "",
+      }))
+    );
+    resetStage();
+    setEditorOpen(false);
+  }
+
+  // Esc ที่ popup เฉลย = เก็บไว้ (action หลัก ปลอดภัยกว่าลบ) / ที่ popup กรอกรายชื่อ = ยกเลิก
   useEffect(() => {
-    if (!revealed || !winner) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") keepWinner();
+      if (e.key !== "Escape") return;
+      if (winner && revealed) keepWinner();
+      else if (editorOpen) setEditorOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const active = rolling || winner !== null;
   const modalOpen = winner !== null && revealed;
 
-  const status = poolError
-    ? poolError
-    : poolLoading
-      ? "กำลังโหลดรายชื่อ…"
-      : pool.length === 0
-        ? source === "range"
-          ? "ไม่มีคนเช็คอินในช่วงที่กรอง"
-          : "ยังไม่มีรายชื่อในทะเบียน"
-        : noRepeat && candidates.length === 0
-          ? "สุ่มครบทุกคนแล้ว — กดล้างประวัติเพื่อเริ่มใหม่"
-          : `สุ่มจาก ${candidates.length} คน`;
-
-  const inputCls =
-    "tnum rounded-xl border border-slate-300 bg-white px-3 py-2.5 outline-none transition-colors focus:border-sky-600 disabled:opacity-50";
-  const presetCls =
-    "cursor-pointer rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50";
+  const status = !ready
+    ? "…"
+    : pool.length === 0
+      ? 'ยังไม่มีรายชื่อ — กด "กรอกรายชื่อ" เพื่อใส่รหัสนักศึกษา'
+      : `สุ่มจาก ${pool.length} คน`;
 
   const tileBase =
     "tnum inline-flex h-14 w-10 sm:h-16 sm:w-12 items-center justify-center rounded-xl border-2 font-mono text-2xl sm:text-3xl font-bold transition-colors duration-150";
@@ -337,130 +385,23 @@ export default function DrawTab() {
           <IconDice className="h-5 w-5 text-sky-700" />
           ตั้งค่าการสุ่ม
         </h2>
-
-        <div className="flex flex-wrap items-center gap-4">
-          <div
-            role="radiogroup"
-            aria-label="กลุ่มที่สุ่ม"
-            className="flex rounded-xl border border-slate-300 bg-slate-50 p-1"
-          >
-            {(["range", "all"] as const).map((s) => (
-              <button
-                key={s}
-                role="radio"
-                aria-checked={source === s}
-                onClick={() => setSource(s)}
-                disabled={rolling}
-                className={`cursor-pointer rounded-lg px-4 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                  source === s
-                    ? "bg-slate-900 text-white"
-                    : "text-slate-600 hover:bg-slate-100"
-                }`}
-              >
-                {s === "range"
-                  ? `กรองตามช่วงเวลา${source === "range" ? ` (${poolLoading ? "…" : pool.length})` : ""}`
-                  : `ทั้งหมดในทะเบียน${source === "all" ? ` (${poolLoading ? "…" : pool.length})` : ""}`}
-              </button>
-            ))}
-          </div>
-          <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-700">
-            <input
-              type="checkbox"
-              checked={noRepeat}
-              onChange={(e) => setNoRepeat(e.target.checked)}
-              disabled={rolling}
-              className="h-4 w-4 accent-sky-700"
-            />
-            ไม่สุ่มซ้ำคนที่ออกแล้ว
-          </label>
+        <div className="flex flex-wrap items-center gap-3">
           <button
-            onClick={clearHistory}
-            disabled={rolling || drawn.length === 0}
+            onClick={openEditor}
+            disabled={rolling || revealed}
+            className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-slate-900 px-5 py-2.5 font-semibold text-white transition-all hover:bg-slate-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <IconPencil className="h-4 w-4" />
+            กรอกรายชื่อ
+          </button>
+          <button
+            onClick={() => setHistory([])}
+            disabled={rolling || history.length === 0}
             className="cursor-pointer rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
           >
             ล้างประวัติ
           </button>
         </div>
-
-        {source === "range" && (
-          <div className="mt-4 flex flex-wrap items-end gap-3 border-t border-slate-100 pt-4">
-            <label className="flex flex-col gap-1 text-sm font-medium text-slate-600">
-              จากวันที่
-              <input
-                type="date"
-                value={dFrom}
-                onChange={(e) => setDFrom(e.target.value)}
-                disabled={rolling}
-                className={inputCls}
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-sm font-medium text-slate-600">
-              ถึงวันที่
-              <input
-                type="date"
-                value={dTo}
-                onChange={(e) => setDTo(e.target.value)}
-                disabled={rolling}
-                className={inputCls}
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-sm font-medium text-slate-600">
-              เวลาเริ่ม
-              <input
-                type="time"
-                value={dFromTime}
-                onChange={(e) => setDFromTime(e.target.value)}
-                disabled={rolling}
-                className={inputCls}
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-sm font-medium text-slate-600">
-              เวลาจบ
-              <input
-                type="time"
-                value={dToTime}
-                onChange={(e) => setDToTime(e.target.value)}
-                disabled={rolling}
-                className={inputCls}
-              />
-            </label>
-            <button
-              onClick={() => {
-                const t = todayStr();
-                setDFrom(t);
-                setDTo(t);
-              }}
-              disabled={rolling}
-              className={presetCls}
-            >
-              วันนี้
-            </button>
-            <button
-              onClick={() => {
-                const t = todayStr();
-                const weekAgo = new Date(Date.now() - 6 * 86400000)
-                  .toLocaleDateString("en-CA");
-                setDFrom(weekAgo);
-                setDTo(t);
-              }}
-              disabled={rolling}
-              className={presetCls}
-            >
-              7 วัน
-            </button>
-            <button
-              onClick={() => {
-                setDFrom("");
-                setDTo("");
-              }}
-              disabled={rolling}
-              className={presetCls}
-            >
-              ทั้งหมด
-            </button>
-          </div>
-        )}
-
         <p role="status" className="mt-3 text-sm font-medium text-slate-500">
           {status}
         </p>
@@ -491,15 +432,16 @@ export default function DrawTab() {
             <div key={gi} className="flex gap-1.5 sm:gap-2">
               {Array.from({ length: e - s }, (_, k) => {
                 const i = s + k;
-                const isLocked = active && i < locked;
-                const ch = active ? spin[i] : "–";
+                const spinning = rolling || winner !== null;
+                const isLocked = spinning && i < locked;
+                const ch = spinning ? spin[i] : "–";
                 return (
                   <span
                     key={`${i}-${isLocked}`}
                     className={`${tileBase} ${
                       isLocked
                         ? "border-slate-900 bg-slate-900 text-white draw-digit-pop"
-                        : active
+                        : spinning
                           ? "border-slate-200 bg-slate-100 text-slate-400"
                           : "border-slate-200 bg-slate-50 text-slate-300"
                     }`}
@@ -519,7 +461,7 @@ export default function DrawTab() {
               className="draw-name-in text-3xl font-bold text-slate-900 sm:text-4xl"
             >
               <IconSparkle className="mr-2 inline h-7 w-7 text-amber-500 sm:h-8 sm:w-8" />
-              {stageResult.name}
+              {displayName(stageResult)}
               <IconSparkle className="ml-2 inline h-7 w-7 text-amber-500 sm:h-8 sm:w-8" />
             </p>
           ) : (
@@ -532,7 +474,7 @@ export default function DrawTab() {
         <div className="mt-6 flex justify-center">
           <button
             onClick={draw}
-            disabled={rolling || revealed || candidates.length === 0}
+            disabled={rolling || revealed || pool.length === 0}
             className="cursor-pointer rounded-2xl bg-slate-900 px-12 py-4 text-lg font-bold text-white shadow-sm transition-all hover:bg-slate-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {rolling ? "กำลังสุ่ม…" : stageResult ? "สุ่มอีกครั้ง" : "สุ่ม!"}
@@ -540,13 +482,124 @@ export default function DrawTab() {
         </div>
       </div>
 
-      {/* popup เฉลยชื่อ — เลือกว่าจะเก็บไว้ในลิสต์การสุ่มหรือลบออก */}
+      {/* วงสุ่มปัจจุบัน */}
+      {pool.length > 0 && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-900">
+              <IconDice className="h-5 w-5 text-sky-700" />
+              รายชื่อในวงสุ่ม ({pool.length})
+            </h2>
+            <button
+              onClick={openEditor}
+              disabled={rolling || revealed}
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <IconPencil className="h-3.5 w-3.5" />
+              แก้ไข
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {pool.map((p) => (
+              <span
+                key={p.student_id}
+                className="inline-flex items-center gap-1.5 rounded-full bg-sky-100 py-1.5 pl-4 pr-2 text-sm font-semibold text-sky-800"
+              >
+                {displayName(p)}
+                <button
+                  onClick={() => removeFromPool(p.student_id)}
+                  aria-label={`ตัด ${displayName(p)} ออกจากวงสุ่ม`}
+                  className="cursor-pointer rounded-full p-1 text-sky-500 transition-colors hover:bg-sky-200 hover:text-sky-900"
+                >
+                  <IconX className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ประวัติการสุ่ม */}
+      {history.length > 0 && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-3 flex items-center gap-2 text-lg font-semibold text-slate-900">
+            <IconDice className="h-5 w-5 text-sky-700" />
+            ประวัติ ({history.length})
+          </h2>
+          <div className="flex flex-wrap gap-2">
+            {[...history].reverse().map((d, idx) => (
+              <span
+                key={`${d.student_id}-${history.length - idx}`}
+                className={`rounded-full px-4 py-1.5 text-sm font-semibold ${
+                  d.removed
+                    ? "bg-red-50 text-red-400 line-through"
+                    : idx === 0
+                      ? "bg-amber-100 text-amber-900 ring-2 ring-amber-400"
+                      : "bg-sky-100 text-sky-800"
+                }`}
+              >
+                {history.length - idx}. {displayName(d)}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* popup กรอกรายชื่อ */}
+      {editorOpen && (
+        <div
+          className="modal-overlay fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="กรอกรายชื่อที่จะสุ่ม"
+        >
+          <div className="modal-card w-full max-w-md rounded-3xl bg-white p-6 shadow-xl sm:p-8">
+            <h3 className="flex items-center gap-2 text-lg font-bold text-slate-900">
+              <IconPencil className="h-5 w-5 text-sky-700" />
+              กรอกรายชื่อที่จะสุ่ม
+            </h3>
+            <p className="mt-1 text-sm text-slate-500">
+              บรรทัดละ 1 คน — ใส่รหัส 11 หลัก หรือวางจากแท็บส่งออก
+              (“รหัส, ชื่อ”) ก็ได้ ดึงชื่อจากทะเบียนให้อัตโนมัติ
+            </p>
+            <label className="sr-only" htmlFor="draw-pool-editor">
+              รายชื่อรหัสนักศึกษา
+            </label>
+            <textarea
+              id="draw-pool-editor"
+              value={editorText}
+              onChange={(e) => setEditorText(e.target.value)}
+              placeholder={"67040249128\n67040249112"}
+              spellCheck={false}
+              className="tnum mt-4 h-64 w-full resize-y rounded-xl border-2 border-slate-200 bg-slate-50 p-4 font-mono text-base leading-7 text-slate-900 outline-none transition-colors focus:border-sky-600"
+            />
+            <div className="mt-5 flex flex-col gap-4 sm:flex-row sm:justify-between">
+              <button
+                onClick={() => setEditorOpen(false)}
+                className="cursor-pointer rounded-xl border-2 border-slate-200 bg-white px-5 py-3 font-semibold text-slate-600 transition-all hover:bg-slate-100 active:scale-95"
+              >
+                ยกเลิก
+              </button>
+              <button
+                autoFocus
+                onClick={() => void savePool()}
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-slate-900 px-5 py-3 font-semibold text-white transition-all hover:bg-slate-700 active:scale-95"
+              >
+                <IconCheck className="h-5 w-5" />
+                บันทึกรายชื่อ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* popup เฉลยชื่อ — เลือกว่าจะเก็บไว้ในวงสุ่มหรือตัดออก */}
       {modalOpen && (
         <div
           className="modal-overlay fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
           role="dialog"
           aria-modal="true"
-          aria-label={`ผู้ชนะการสุ่ม ${winner.name}`}
+          aria-label={`ผู้ชนะการสุ่ม ${displayName(winner)}`}
         >
           <div className="modal-card w-full max-w-md rounded-3xl bg-white p-8 text-center shadow-xl">
             <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-amber-100 text-amber-600">
@@ -556,7 +609,7 @@ export default function DrawTab() {
               ผู้ชนะการสุ่ม
             </p>
             <p className="mt-2 text-3xl font-bold text-slate-900 sm:text-4xl">
-              {winner.name}
+              {displayName(winner)}
             </p>
             <p className="tnum mt-2 font-mono text-lg tracking-wider text-slate-400">
               {winner.student_id}
@@ -579,32 +632,9 @@ export default function DrawTab() {
               </button>
             </div>
             <p className="mt-4 text-xs text-slate-400">
-              ลบออก = ทิ้งรอบนี้ คนนี้ยังถูกสุ่มได้ในรอบถัดไป
+              ลบออก = ตัดชื่อนี้ออกจากวงสุ่มถาวร • เก็บไว้ = ยังอยู่ในวงสุ่ม
+              สุ่มซ้ำได้
             </p>
-          </div>
-        </div>
-      )}
-
-      {/* ประวัติการสุ่ม */}
-      {drawn.length > 0 && (
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="mb-3 flex items-center gap-2 text-lg font-semibold text-slate-900">
-            <IconDice className="h-5 w-5 text-sky-700" />
-            ประวัติ ({drawn.length})
-          </h2>
-          <div className="flex flex-wrap gap-2">
-            {[...drawn].reverse().map((d, idx) => (
-              <span
-                key={d.student_id}
-                className={`rounded-full px-4 py-1.5 text-sm font-semibold ${
-                  idx === 0
-                    ? "bg-amber-100 text-amber-900 ring-2 ring-amber-400"
-                    : "bg-sky-100 text-sky-800"
-                }`}
-              >
-                {drawn.length - idx}. {d.name}
-              </span>
-            ))}
           </div>
         </div>
       )}
