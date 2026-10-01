@@ -43,6 +43,16 @@ export function playSuccess() {
   tone(1318, 0.12, 0.25);
 }
 
+/** ติ๊กสั้น ๆ ตอนล็อคกลุ่มตัวเลขในหน้าสุ่มรางวัล */
+export function playTick() {
+  tone(1150, 0, 0.05, "square", 0.1);
+}
+
+/** แต๊ะเบา ๆ ตอนตัวเลขกำลังหมุน (เสียงรอกสล็อต สังเคราะห์สด ไม่ใช้ไฟล์) */
+export function playSpinTick() {
+  tone(1800, 0, 0.03, "square", 0.06);
+}
+
 export function playDuplicate() {
   tone(660, 0, 0.15, "triangle");
   tone(660, 0.22, 0.15, "triangle");
@@ -53,6 +63,14 @@ export function playFail() {
 }
 
 export type VoiceKind = "success" | "duplicate" | "error";
+
+/** เสียงฉลองตอนเฉลยรางวัลจากการสุ่ม เร่งความเร็ว 1.25 เท่า */
+export function playCongrats() {
+  if (typeof window === "undefined") return;
+  const audio = new Audio("/sounds/congrats.mp3");
+  audio.playbackRate = 1.25;
+  audio.play().catch(() => playSuccess());
+}
 
 /**
  * เล่นไฟล์เสียงพูดจาก /public/sounds/{kind}.mp3

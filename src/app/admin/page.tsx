@@ -2,13 +2,23 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import DrawTab from "./draw-tab";
 
 type TodayRow = { id: number; student_id: string; name: string; time: string };
 type Student = { student_id: string; name: string; created_at: string };
 type MissingRow = { student_id: string; name: string };
-type Tab = "today" | "roster" | "missing" | "export";
+type Tab = "today" | "roster" | "missing" | "export" | "draw";
 
 const todayStr = () => new Date().toLocaleDateString("en-CA");
+
+const TABS: Tab[] = ["today", "roster", "missing", "export", "draw"];
+
+/** อ่าน ?tab= ตอนโหลดหน้า — รีเฟรชแล้วอยู่แท็บเดิม (ใช้หลัง mount กัน hydration mismatch) */
+function tabFromUrl(): Tab | null {
+  if (typeof window === "undefined") return null;
+  const t = new URLSearchParams(window.location.search).get("tab");
+  return TABS.includes(t as Tab) ? (t as Tab) : null;
+}
 
 function IconCheck({ className = "" }: { className?: string }) {
   return (
@@ -109,6 +119,21 @@ function EmptyState({
 
 export default function AdminPage() {
   const [tab, setTab] = useState<Tab>("today");
+
+  useEffect(() => {
+    const t = tabFromUrl();
+    if (t) setTab(t);
+  }, []);
+
+  function selectTab(t: Tab) {
+    setTab(t);
+    // เก็บแท็บปัจจุบันไว้ใน URL (replace ไม่อุดประวัติย้อนกลับ)
+    window.history.replaceState(
+      null,
+      "",
+      t === "today" ? "/admin" : `/admin?tab=${t}`
+    );
+  }
 
   const [todayDate, setTodayDate] = useState("");
   const [todayRows, setTodayRows] = useState<TodayRow[]>([]);
@@ -262,7 +287,7 @@ export default function AdminPage() {
 
   const tabBtn = (t: Tab, label: string) => (
     <button
-      onClick={() => setTab(t)}
+      onClick={() => selectTab(t)}
       aria-current={tab === t ? "page" : undefined}
       className={`cursor-pointer rounded-xl px-5 py-2.5 text-sm font-semibold transition-colors ${
         tab === t
@@ -299,6 +324,7 @@ export default function AdminPage() {
         {tabBtn("roster", `ทะเบียน (${students.length})`)}
         {tabBtn("missing", `ยังไม่เช็ค (${missingRows.length})`)}
         {tabBtn("export", "ส่งออก")}
+        {tabBtn("draw", "สุ่มรางวัล")}
       </nav>
 
       {tab === "today" && (
@@ -654,6 +680,7 @@ export default function AdminPage() {
           )}
         </section>
       )}
+      {tab === "draw" && <DrawTab />}
     </main>
   );
 }

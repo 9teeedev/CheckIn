@@ -49,19 +49,21 @@ export async function GET(req: Request) {
 
   const rows = db
     .prepare(
-      `SELECT s.name AS name, MIN(c.date || ' ' || c.time) AS first_at
+      `SELECT s.student_id AS student_id, s.name AS name, MIN(c.date || ' ' || c.time) AS first_at
        FROM checkins c
        JOIN students s ON s.student_id = c.student_id
        ${where}
        GROUP BY c.student_id
        ORDER BY first_at`
     )
-    .all(...params) as { name: string; first_at: string }[];
+    .all(...params) as { student_id: string; name: string; first_at: string }[];
 
   return NextResponse.json({
     from: from || null,
     to: to || null,
     count: rows.length,
     names: rows.map((r) => r.name),
+    // คู่รหัส+ชื่อ สำหรับหน้าสุ่มรางวัล
+    people: rows.map((r) => ({ student_id: r.student_id, name: r.name })),
   });
 }
