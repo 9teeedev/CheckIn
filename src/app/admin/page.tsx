@@ -3,15 +3,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import DrawTab from "./draw-tab";
+import SeatingTab from "./seating-tab";
 
 type TodayRow = { id: number; student_id: string; name: string; time: string };
 type Student = { student_id: string; name: string; created_at: string };
 type MissingRow = { student_id: string; name: string };
-type Tab = "today" | "roster" | "missing" | "export" | "draw";
+type Tab = "today" | "roster" | "missing" | "export" | "draw" | "seating";
 
 const todayStr = () => new Date().toLocaleDateString("en-CA");
 
-const TABS: Tab[] = ["today", "roster", "missing", "export", "draw"];
+const TABS: Tab[] = ["today", "roster", "missing", "export", "draw", "seating"];
 
 /** อ่าน ?tab= ตอนโหลดหน้า — รีเฟรชแล้วอยู่แท็บเดิม (ใช้หลัง mount กัน hydration mismatch) */
 function tabFromUrl(): Tab | null {
@@ -327,6 +328,7 @@ export default function AdminPage() {
         {tabBtn("missing", `ยังไม่เช็ค (${missingRows.length})`)}
         {tabBtn("export", "ส่งออก")}
         {tabBtn("draw", "สุ่มรางวัล")}
+        {tabBtn("seating", "ที่นั่ง")}
       </nav>
 
       {tab === "today" && (
@@ -684,6 +686,7 @@ export default function AdminPage() {
         </section>
       )}
       {tab === "draw" && <DrawTab />}
+      {tab === "seating" && <SeatingTab />}
     </main>
   );
 }

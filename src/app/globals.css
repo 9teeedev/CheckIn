@@ -130,3 +130,18 @@ body {
 .draw-digit-pop {
   animation: draw-digit-pop 240ms ease-out;
 }
+
+/* จัดที่นั่ง: ที่นั่ง/โต๊ะที่ค้นหาเจอ (กะพริบด้วย box-shadow เพราะที่นั่งใช้ transform วางตำแหน่งอยู่แล้ว) */
+@keyframes seat-found {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.45);
+  }
+}
+
+.seat-found {
+  animation: seat-found 1.2s ease-in-out infinite;
+}

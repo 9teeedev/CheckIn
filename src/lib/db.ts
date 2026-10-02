@@ -20,6 +20,13 @@ db.exec(`
     time TEXT NOT NULL,
     UNIQUE(student_id, date)
   );
+  CREATE TABLE IF NOT EXISTS seating_plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    label TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    data TEXT NOT NULL DEFAULT '{}'
+  );
 `);
 
 const TZ = "Asia/Bangkok";
