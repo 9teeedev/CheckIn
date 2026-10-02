@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { playCongrats, playSpinTick, playTick, unlockAudio } from "@/lib/sound";
 import { extractStudentId } from "@/lib/util";
 
@@ -15,7 +15,7 @@ const GROUPS: Array<[number, number]> = [
   [8, 11],
 ];
 
-/** จังหวะเฉลย (ms) — 67 → 040 → 249 ทีละกลุ่ม ส่วน 3 ตัวท้ายทีละตัว ช้าขึ้นเรื่อยๆ */
+/** จังหวะสั่งเบรกวงล้อ (ms) — 67 → 040 → 249 ทีละกลุ่ม ส่วน 3 ตัวท้ายทีละตัว ช้าขึ้นเรื่อยๆ */
 const REVEAL: Array<{ s: number; e: number; at: number }> = [
   { s: 0, e: 2, at: 1000 },
   { s: 2, e: 5, at: 2700 },
@@ -28,8 +28,6 @@ const NAME_AT = 11200;
 
 /** เก็บวงสุ่ม + ประวัติไว้ใน localStorage รีเฟรชไม่หาย */
 const LS_KEY = "checkin-draw";
-
-const randDigit = () => String(Math.floor(Math.random() * 10));
 
 const displayName = (p: Person) => p.name || p.student_id;
 
@@ -148,6 +146,225 @@ type Piece = {
   size: number;
 };
 
+/**
+ * วงล้อสล็อต — แถบเลขของแต่ละหลัก slice จากรายชื่อจริงที่กรอก (เฉพาะเลขที่เป็นไปได้ที่หลักนั้น
+ * เช่น 67xxx + 68xxx → หลักแรกมีแค่ 6 หลักสองมี 7,8) คัดซ้ำ+เรียง ทำซ้ำต่อกันเป็นแถบยาวเลื่อนขึ้น
+ */
+const REEL_REPEATS = 5; // ทำซ้ำกี่รอบ (ต้องยาวพอให้เห็นครบ 5 แถวตลอดช่วงเลื่อน)
+const REEL_CYCLES = 3; // รอบ/วินาที ตอนหมุน (คูณจำนวนเลขของหลักนั้น = ช่อง/วินาที)
+const REEL_OVER = 0.22; // สัดส่วนช่อง — เว่อร์เลยเป้าหมายแล้วเด้งกลับ ให้เหมือนเฟืองจริงกระแทกขอบตู้
+const REEL_STAGGER = 90; // หน่วงจังหวะเบรกของหลักในกลุ่มเดียวกัน (ms)
+
+const REEL_TILE =
+  "tnum relative inline-flex h-[280px] w-10 sm:h-[320px] sm:w-14 items-center justify-center overflow-hidden rounded-xl border-2 font-mono text-2xl sm:text-3xl font-bold transition-colors duration-150";
+
+/**
+ * ม่านจางบน-ล่างของวงล้อ — จุดสีอยู่ที่ "กึ่งกลางแถว" พอดี (แถวละ 20%):
+ * แถวกลาง (40-60%) โปร่งหมด = ชัดสุดหนึ่งเดียว, แถวติดกลางจางครึ่งนึง, แถวนอกสุดจางมากแต่ยังเห็น
+ */
+function veilGradient(hex: string): string {
+  const n = parseInt(hex.slice(1), 16);
+  const c = (a: number) =>
+    `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  return `linear-gradient(to bottom, ${c(1)} 0%, ${c(0.78)} 10%, ${c(0.5)} 30%, ${c(0)} 40%, ${c(0)} 60%, ${c(0.5)} 70%, ${c(0.78)} 90%, ${c(1)} 100%)`;
+}
+
+/**
+ * ช่องเลข 1 หลักแบบวงล้อสล็อต — หน้าต่างสูง 5 แถว แถวกลางชัดสุด แถวรอบจางลงไล่ระดับเหมือนมองวงล้อในตู้
+ * mode="spin" แถบเลขเลื่อนขึ้นเรื่อย ๆ พอเปลี่ยนเป็น "brake" จะวิ่งอีกอย่างน้อยหนึ่งรอบเต็ม
+ * เบรกช้าลง เว่อร์เลยเป้านิดหน่อยแล้วเด้งกลับนั่งลงบน target พอดีแถวกลาง เสียงติ๊กดังตอนนั่ง
+ * (เลื่อนเป็น % ของความสูงแถบเอง ไม่ต้องวัด px — 1 ช่อง = 100 ÷ จำนวนช่องทั้งแถบ)
+ */
+function Reel({
+  mode,
+  digits,
+  target,
+  delay,
+}: {
+  mode: "idle" | "spin" | "brake";
+  digits: string[];
+  target: string;
+  delay: number;
+}) {
+  const L = digits.length;
+  const stripRef = useRef<HTMLDivElement | null>(null);
+  const [landed, setLanded] = useState(false);
+  const st = useRef({
+    pos: 0,
+    L,
+    phase: "idle" as "idle" | "spin" | "armed" | "brake" | "settle",
+    t0: 0,
+    from: 0,
+    dest: 0,
+    over: 0,
+    dur: 1,
+    last: 0,
+    raf: 0,
+    timer: 0,
+  });
+  // อัปเดตทุกเรนเดอร์ กัน frame/paint ที่ค้างจากเรนเดอร์ก่อนใช้ค่า L เก่า
+  st.current.L = L;
+
+  // เลื่อนแถบให้ "เลขปัจจุบัน" อยู่แถวกลางพอดี และมีเลขให้เห็นจาง ๆ ทั้งบน-ล่าง
+  const paint = (pos: number) => {
+    const el = stripRef.current;
+    if (!el) return;
+    const s = st.current;
+    const q = ((pos % s.L) + s.L) % s.L;
+    const cell = 100 / (s.L * REEL_REPEATS);
+    el.style.transform = `translateY(${-(q + Math.max(s.L - 2, 0)) * cell}%)`;
+  };
+
+  const stopLoop = () => {
+    cancelAnimationFrame(st.current.raf);
+    st.current.raf = 0;
+  };
+
+  const frame = (now: number) => {
+    const s = st.current;
+    const dt = Math.min(0.05, (now - s.last) / 1000);
+    s.last = now;
+    if (s.phase === "spin" || s.phase === "armed") {
+      s.pos += REEL_CYCLES * s.L * dt;
+      paint(s.pos);
+    } else if (s.phase === "brake") {
+      const t = Math.min(1, (now - s.t0) / s.dur);
+      s.pos = s.from + (s.dest - s.from) * (1 - Math.pow(1 - t, 3));
+      paint(s.pos);
+      if (t >= 1) {
+        s.dest -= s.over; // จุดนั่งจริง = เป้าหมายพอดี (ตัดส่วนเว่อร์ออก)
+        s.dur = 150;
+        s.t0 = now;
+        s.phase = "settle";
+      }
+    } else if (s.phase === "settle") {
+      const t = Math.min(1, (now - s.t0) / s.dur);
+      s.pos = s.dest + s.over * Math.pow(1 - t, 2);
+      paint(s.pos);
+      if (t >= 1) {
+        s.phase = "idle";
+        s.pos = s.dest;
+        paint(s.pos);
+        setLanded(true);
+        playTick();
+        stopLoop();
+        return;
+      }
+    }
+    s.raf = requestAnimationFrame(frame);
+  };
+
+  const startLoop = () => {
+    if (st.current.raf) return;
+    st.current.last = performance.now();
+    st.current.raf = requestAnimationFrame(frame);
+  };
+
+  useEffect(() => {
+    const s = st.current;
+    if (mode === "idle") {
+      window.clearTimeout(s.timer);
+      stopLoop();
+      s.phase = "idle";
+      s.pos = 0;
+      setLanded(false);
+      paint(0);
+      return;
+    }
+    if (mode === "spin") {
+      if (s.phase !== "idle") return;
+      setLanded(false);
+      s.phase = "spin";
+      startLoop();
+      return;
+    }
+    // mode === "brake"
+    if (s.phase === "armed" || s.phase === "brake" || s.phase === "settle")
+      return;
+    if (
+      s.phase === "idle" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+    ) {
+      s.pos = Math.max(0, digits.indexOf(target));
+      paint(s.pos);
+      setLanded(true);
+      return;
+    }
+    if (s.phase === "idle") {
+      s.phase = "spin";
+      startLoop();
+    }
+    s.phase = "armed";
+    s.timer = window.setTimeout(() => {
+      const tIdx = Math.max(0, digits.indexOf(target));
+      // ระยะแบบ "หนึ่งรอบเต็มขึ้นไป" เพื่อให้ปลายทางลงตัวบน target พอดี (mod L)
+      const gap = ((((tIdx - s.pos) % s.L) + s.L) % s.L) + s.L;
+      s.from = s.pos;
+      s.dest = s.pos + gap;
+      s.over = REEL_OVER;
+      s.dur = Math.min(1250, Math.max(700, (gap * 3000) / (REEL_CYCLES * s.L)));
+      s.t0 = performance.now();
+      s.phase = "brake";
+      startLoop();
+    }, delay);
+  }, [mode, digits, target, delay]);
+
+  useEffect(() => {
+    const s = st.current;
+    return () => {
+      window.clearTimeout(s.timer);
+      cancelAnimationFrame(s.raf);
+    };
+  }, []);
+
+  const spinning = mode !== "idle" && !landed;
+  return (
+    <span
+      className={`${REEL_TILE} ${
+        spinning || landed
+          ? "border-slate-200 bg-slate-100 text-slate-400"
+          : "border-slate-200 bg-slate-50 text-slate-300"
+      }`}
+    >
+      {spinning || landed ? (
+        <>
+          <span
+            ref={stripRef}
+            aria-hidden="true"
+            className="absolute inset-x-0 top-0 flex flex-col will-change-transform"
+          >
+            {Array.from({ length: L * REEL_REPEATS }, (_, j) => (
+              <span
+                key={j}
+                className="flex h-14 items-center justify-center sm:h-16"
+              >
+                {digits[j % L]}
+              </span>
+            ))}
+          </span>
+          {/* ได้ผลแล้ว — แถบกลาง (แถวที่ 3) เป็นสีเขียว เลขขาว พร้อมเด้ง */}
+          {landed && (
+            <span
+              aria-hidden="true"
+              className="draw-digit-pop absolute inset-x-0 top-[40%] flex h-[20%] items-center justify-center bg-emerald-600 font-mono text-2xl font-bold text-white sm:text-3xl"
+            >
+              {target}
+            </span>
+          )}
+          {/* ม่านจางบน-ล่าง — แถวกลางชัดสุดเดียว แถวรอบจางลงเรื่อย ๆ เหมือนวงล้อลึกในตู้ */}
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 rounded-xl"
+            style={{ background: veilGradient("#f1f5f9") }}
+          />
+        </>
+      ) : (
+        "–"
+      )}
+    </span>
+  );
+}
+
 const CONFETTI_COLORS = ["#0284c7", "#f59e0b", "#10b981", "#f43f5e", "#8b5cf6"];
 
 export default function DrawTab() {
@@ -162,11 +379,20 @@ export default function DrawTab() {
   const [winner, setWinner] = useState<Person | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [stageResult, setStageResult] = useState<Person | null>(null);
-  const [spin, setSpin] = useState("-----------");
   const [confetti, setConfetti] = useState<Piece[]>([]);
   const timers = useRef<number[]>([]);
   // จำนวนหลักที่ล็อคแล้วนับจากซ้าย (ref อัปเดตทันที กัน interval ตัวหมุนใช้ค่าเก่าเขียนทับ)
   const lockedRef = useRef(0);
+
+  // เลขที่เป็นไปได้ของแต่ละหลัก — slice จากรายชื่อจริงที่กรอกเข้ามา (คัดซ้ำ เรียง)
+  // เช่น 67040249128 + 68040249117 → หลัก 1 มีแค่ 6 / หลัก 2 มี 7,8 / หลัก 3 มีแค่ 0
+  const poolDigits = useMemo(
+    () =>
+      Array.from({ length: 11 }, (_, i) =>
+        [...new Set(pool.map((p) => p.student_id[i] ?? "0"))].sort()
+      ),
+    [pool]
+  );
 
   useEffect(() => {
     const stash = timers.current;
@@ -197,17 +423,12 @@ export default function DrawTab() {
     }
   }, [ready, pool, history]);
 
-  // ตัวเลขหมุนในตำแหน่งที่ยังไม่ล็อค (70ms/ครั้ง)
-  // เสียงแต๊ะตามจังหวะหมุน — เงียบช่วงท้าย (ล็อคครบแล้ว ค้างไว้ก่อนเฉลยชื่อ) ให้เงียบเพิ่มความลุ้น
+  // เสียงแต๊ะตามจังหวะวงล้อหมุน (ภาพวงล้อจัดการเองใน Reel)
+  // เงียบช่วงท้าย (สั่งเบรกครบแล้ว ค้างไว้ก่อนเฉลยชื่อ) ให้เงียบเพิ่มความลุ้น
   useEffect(() => {
     if (!rolling) return;
     const iv = window.setInterval(() => {
       if (lockedRef.current < 11) playSpinTick();
-      setSpin((s) =>
-        Array.from({ length: 11 }, (_, i) =>
-          i < lockedRef.current ? s[i] : randDigit()
-        ).join("")
-      );
     }, 70);
     return () => window.clearInterval(iv);
   }, [rolling]);
@@ -230,7 +451,6 @@ export default function DrawTab() {
     setStageResult(null);
     setLocked(0);
     lockedRef.current = 0;
-    setSpin("-----------");
   }
 
   function draw() {
@@ -243,7 +463,6 @@ export default function DrawTab() {
     setRevealed(false);
     setStageResult(null);
     setLocked(0);
-    setSpin(Array.from({ length: 11 }, randDigit).join(""));
     setRolling(true);
 
     const reduced = window.matchMedia?.(
@@ -251,7 +470,6 @@ export default function DrawTab() {
     ).matches;
     if (reduced) {
       lockedRef.current = 11;
-      setSpin(w.student_id);
       setLocked(11);
       setRolling(false);
       setRevealed(true);
@@ -259,18 +477,13 @@ export default function DrawTab() {
       return;
     }
 
-    // เฉลย 67 → 040 → 249 ทีละกลุ่ม แล้ว 3 ตัวท้ายทีละตัว ช้าขึ้นเรื่อยๆ ก่อนเฉลยชื่อ
-    REVEAL.forEach(({ s, e, at }) => {
+    // สั่งเบรกวงล้อ 67 → 040 → 249 ทีละกลุ่ม แล้ว 3 ตัวท้ายทีละตัว
+    // (แต่ละวงล้อค่อย ๆ เลื่อนขึ้นลงจอดบนเลขจริง เสียงติ๊กดังตอนจอด)
+    REVEAL.forEach(({ e, at }) => {
       timers.current.push(
         window.setTimeout(() => {
           lockedRef.current = e;
           setLocked(e);
-          setSpin((prev) =>
-            prev.slice(0, s) +
-            w.student_id.slice(s, e).padEnd(e - s, "–") +
-            prev.slice(e)
-          );
-          playTick();
         }, at)
       );
     });
@@ -374,9 +587,6 @@ export default function DrawTab() {
       ? 'ยังไม่มีรายชื่อ — กด "กรอกรายชื่อ" เพื่อใส่รหัสนักศึกษา'
       : `สุ่มจาก ${pool.length} คน`;
 
-  const tileBase =
-    "tnum inline-flex h-14 w-10 sm:h-16 sm:w-12 items-center justify-center rounded-xl border-2 font-mono text-2xl sm:text-3xl font-bold transition-colors duration-150";
-
   return (
     <section className="flex flex-col gap-4">
       {/* การ์ดตั้งค่า */}
@@ -433,21 +643,21 @@ export default function DrawTab() {
               {Array.from({ length: e - s }, (_, k) => {
                 const i = s + k;
                 const spinning = rolling || winner !== null;
-                const isLocked = spinning && i < locked;
-                const ch = spinning ? spin[i] : "–";
+                const mode = !spinning
+                  ? "idle"
+                  : i < locked
+                    ? "brake"
+                    : "spin";
                 return (
-                  <span
-                    key={`${i}-${isLocked}`}
-                    className={`${tileBase} ${
-                      isLocked
-                        ? "border-slate-900 bg-slate-900 text-white draw-digit-pop"
-                        : spinning
-                          ? "border-slate-200 bg-slate-100 text-slate-400"
-                          : "border-slate-200 bg-slate-50 text-slate-300"
-                    }`}
-                  >
-                    {ch}
-                  </span>
+                  <Reel
+                    key={i}
+                    mode={mode}
+                    digits={poolDigits[i] ?? ["0"]}
+                    target={
+                      winner ? (winner.student_id[i] ?? poolDigits[i]?.[0]) : (poolDigits[i]?.[0] ?? "0")
+                    }
+                    delay={k * REEL_STAGGER}
+                  />
                 );
               })}
             </div>
