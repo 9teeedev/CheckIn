@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db, nowParts } from "@/lib/db";
-import { parseSeatingData } from "@/lib/seating";
+import { parseSeatingPlan } from "@/lib/seating";
 
 export async function GET() {
   const rows = db
@@ -13,7 +13,7 @@ export async function GET() {
       id: r.id,
       label: r.label,
       updated_at: r.updated_at,
-      seated: Object.keys(parseSeatingData(r.data)).length,
+      seated: Object.keys(parseSeatingPlan(r.data).seats).length,
     })),
   });
 }

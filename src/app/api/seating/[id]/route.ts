@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db, nowParts } from "@/lib/db";
-import { parseSeatingData, validSeatingData } from "@/lib/seating";
+import { parseSeatingPlan, validSeatingData } from "@/lib/seating";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -20,7 +20,7 @@ export async function GET(_req: Request, { params }: Ctx) {
   return NextResponse.json({
     id: row.id,
     label: row.label,
-    data: parseSeatingData(row.data),
+    data: parseSeatingPlan(row.data),
   });
 }
 
