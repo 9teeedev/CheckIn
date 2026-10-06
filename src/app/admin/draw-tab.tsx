@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { playCongrats, playSpinTick, playTick, unlockAudio } from "@/lib/sound";
+import {
+  isMuted,
+  playCongrats,
+  playSpinTick,
+  playTick,
+  setMuted,
+  unlockAudio,
+} from "@/lib/sound";
 import { extractStudentId } from "@/lib/util";
 
 type Person = { student_id: string; name: string };
@@ -134,6 +141,42 @@ function IconX({ className = "" }: { className?: string }) {
       aria-hidden="true"
     >
       <path d="M18 6 6 18M6 6l12 12" />
+    </svg>
+  );
+}
+
+function IconSpeakerOn({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M11 5 6 9H3a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h3l5 4V5z" />
+      <path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13" />
+    </svg>
+  );
+}
+
+function IconSpeakerOff({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M11 5 6 9H3a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h3l5 4V5z" />
+      <path d="M22 9l-6 6M16 9l6 6" />
     </svg>
   );
 }
@@ -373,6 +416,8 @@ export default function DrawTab() {
   const [ready, setReady] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorText, setEditorText] = useState("");
+  const [voiceOff, setVoiceOff] = useState(false);
+  const [tickOff, setTickOff] = useState(false);
 
   const [rolling, setRolling] = useState(false);
   const [locked, setLocked] = useState(0);
@@ -411,6 +456,8 @@ export default function DrawTab() {
     } catch {
       /* localStorage พังก็ปล่อยเป็นวงว่าง */
     }
+    setVoiceOff(isMuted("voice"));
+    setTickOff(isMuted("tick"));
     setReady(true);
   }, []);
 
@@ -610,6 +657,48 @@ export default function DrawTab() {
             className="cursor-pointer rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
           >
             ล้างประวัติ
+          </button>
+          <button
+            onClick={() => {
+              const next = !voiceOff;
+              setVoiceOff(next);
+              setMuted("voice", next);
+            }}
+            aria-pressed={!voiceOff}
+            title={voiceOff ? "เปิดเสียงพูด" : "ปิดเสียงพูด"}
+            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+              voiceOff
+                ? "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
+                : "border-slate-300 text-slate-700 hover:bg-slate-100"
+            }`}
+          >
+            {voiceOff ? (
+              <IconSpeakerOff className="h-4 w-4" />
+            ) : (
+              <IconSpeakerOn className="h-4 w-4" />
+            )}
+            เสียงพูด
+          </button>
+          <button
+            onClick={() => {
+              const next = !tickOff;
+              setTickOff(next);
+              setMuted("tick", next);
+            }}
+            aria-pressed={!tickOff}
+            title={tickOff ? "เปิดเสียงติ๊ก" : "ปิดเสียงติ๊ก"}
+            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+              tickOff
+                ? "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
+                : "border-slate-300 text-slate-700 hover:bg-slate-100"
+            }`}
+          >
+            {tickOff ? (
+              <IconSpeakerOff className="h-4 w-4" />
+            ) : (
+              <IconSpeakerOn className="h-4 w-4" />
+            )}
+            เสียงติ๊ก
           </button>
         </div>
         <p role="status" className="mt-3 text-sm font-medium text-slate-500">
