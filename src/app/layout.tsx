@@ -10,8 +10,9 @@ const anuphan = Anuphan({
 });
 
 export const metadata: Metadata = {
-  title: "เช็คอินหน้าห้อง",
-  description: "ระบบเช็คอินเข้าเรียนด้วยรหัสนักศึกษาหรือ QR code",
+  title: "ลงทะเบียนเข้าร่วมงานบายเนียร์",
+  description:
+    "ระบบลงทะเบียนเข้าร่วมงานบายเนียร์ด้วยรหัสนักศึกษาหรือ QR code",
 };
 
 export const viewport: Viewport = {

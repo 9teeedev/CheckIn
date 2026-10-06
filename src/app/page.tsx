@@ -10,6 +10,7 @@ type CheckinResult = {
   name?: string;
   time?: string;
   message?: string;
+  seat?: { table: number; seat: number };
 };
 
 function IconCheck({ className = "" }: { className?: string }) {
@@ -121,9 +122,23 @@ export default function CheckinPage() {
         const scanner = new Html5Qrcode("reader");
         scannerRef.current = scanner;
         // MacBook มีกล้องหน้าเดียว
+        // html5-qrcode: argument แรกรับแค่ facingMode/deviceId เท่านั้น
+        // resolution ต้องอยู่ใน videoConstraints ของ config (ตัวนี้แหละที่ส่งให้ getUserMedia)
         await scanner.start(
           { facingMode: "user" },
-          { fps: 10, qrbox: { width: 260, height: 260 } },
+          {
+            fps: 15,
+            videoConstraints: {
+              facingMode: "user",
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+            },
+            qrbox: (viewfinderWidth, viewfinderHeight) => {
+              // กรอบ 70% ของภาพ ไม่ต้องเล็งกลางจอ
+              const edge = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.7);
+              return { width: edge, height: edge };
+            },
+          },
           (decodedText) => onDecoded(decodedText),
           () => {
             /* เฟรมที่สแกนไม่เจอ */
@@ -133,10 +148,11 @@ export default function CheckinPage() {
       } catch (err) {
         scannerRef.current = null;
         setCamOn(false);
+        // html5-qrcode มัก throw เป็น string ไม่ใช่ Error — String() ให้เห็นสาเหตุจริง
         setCamError(
           err instanceof Error
             ? `เปิดกล้องไม่ได้: ${err.message}`
-            : "เปิดกล้องไม่ได้ ลองกดปุ่มใหม่"
+            : `เปิดกล้องไม่ได้: ${String(err)}`
         );
       }
     },
@@ -187,6 +203,9 @@ export default function CheckinPage() {
     if (countdown <= 0) closeResult();
   }, [countdown, closeResult]);
 
+  const seatLine =
+    result?.seat != null ? `โต๊ะ ${result.seat.table} ที่ ${result.seat.seat}` : "";
+
   const modal = (() => {
     if (result === null)
       return {
@@ -222,7 +241,7 @@ export default function CheckinPage() {
       <header className="flex items-center justify-between border-b border-slate-200 pb-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 lg:text-3xl">
-            เช็คอินหน้าห้อง
+            ลงทะเบียนเข้าร่วมงานบายเนียร์
           </h1>
           <p className="mt-1 text-sm text-slate-500">
             สแกนบัตรนักศึกษา หรือพิมพ์รหัส 11 หลัก
@@ -345,6 +364,13 @@ export default function CheckinPage() {
             <div className="flex justify-center">{modal.icon}</div>
             <div className="mt-4 text-4xl font-bold">{modal.title}</div>
             <div className="tnum mt-2 text-lg">{modal.detail}</div>
+            {seatLine && (
+              <div className="mt-4">
+                <span className="tnum inline-flex items-center rounded-3xl bg-white/80 px-10 py-4 text-5xl font-extrabold tracking-wide text-slate-900 shadow-sm ring-2 ring-current/20">
+                  {seatLine}
+                </span>
+              </div>
+            )}
 
             <button
               onClick={closeResult}
