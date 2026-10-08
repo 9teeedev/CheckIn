@@ -311,7 +311,7 @@ export default function AdminPage() {
   return (
     <main
       className={`mx-auto flex min-h-dvh w-full flex-col gap-6 px-4 py-6 lg:px-8 ${
-        tab === "seating" ? "max-w-[1700px]" : "max-w-4xl"
+        tab === "seating" || tab === "draw" ? "max-w-[1700px]" : "max-w-4xl"
       }`}
     >
       <header className="flex items-center justify-between border-b border-slate-200 pb-4">

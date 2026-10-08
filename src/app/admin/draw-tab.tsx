@@ -199,7 +199,7 @@ const REEL_OVER = 0.22; // สัดส่วนช่อง — เว่อร
 const REEL_STAGGER = 90; // หน่วงจังหวะเบรกของหลักในกลุ่มเดียวกัน (ms)
 
 const REEL_TILE =
-  "tnum relative inline-flex h-[280px] w-10 sm:h-[320px] sm:w-14 items-center justify-center overflow-hidden rounded-xl border-2 font-mono text-2xl sm:text-3xl font-bold transition-colors duration-150";
+  "tnum relative inline-flex h-[400px] w-20 sm:h-[480px] sm:w-24 items-center justify-center overflow-hidden rounded-2xl border-2 font-mono text-4xl sm:text-5xl font-bold transition-colors duration-150";
 
 /**
  * ม่านจางบน-ล่างของวงล้อ — จุดสีอยู่ที่ "กึ่งกลางแถว" พอดี (แถวละ 20%):
@@ -379,7 +379,7 @@ function Reel({
             {Array.from({ length: L * REEL_REPEATS }, (_, j) => (
               <span
                 key={j}
-                className="flex h-14 items-center justify-center sm:h-16"
+                className="flex h-20 items-center justify-center sm:h-24"
               >
                 {digits[j % L]}
               </span>
@@ -389,7 +389,7 @@ function Reel({
           {landed && (
             <span
               aria-hidden="true"
-              className="draw-digit-pop absolute inset-x-0 top-[40%] flex h-[20%] items-center justify-center bg-emerald-600 font-mono text-2xl font-bold text-white sm:text-3xl"
+              className="draw-digit-pop absolute inset-x-0 top-[40%] flex h-[20%] items-center justify-center bg-emerald-600 font-mono text-4xl font-bold text-white sm:text-5xl"
             >
               {target}
             </span>
@@ -626,6 +626,25 @@ export default function DrawTab() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  // Space = สุ่ม (ไม่ทำงานตอนเปิด popup อยู่ หรือโฟกัสช่องกรอก/ปุ่มอยู่แล้ว
+  // กัน Space กดปุ่มอื่นซ้ำเป็นสอง action)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code !== "Space" || e.repeat) return;
+      if (editorOpen || (winner != null && revealed)) return;
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        t.closest("button, input, textarea, select, a, [role='button']")
+      )
+        return;
+      e.preventDefault();
+      draw();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   const modalOpen = winner !== null && revealed;
 
   const status = !ready
@@ -724,7 +743,9 @@ export default function DrawTab() {
         ))}
 
         <div
-          className="flex flex-wrap items-center justify-center gap-x-4 gap-y-3 sm:gap-x-6"
+          onClick={draw}
+          title="คลิกที่วงล้อ หรือกด Space เพื่อสุ่ม"
+          className="flex cursor-pointer flex-wrap items-center justify-center gap-x-6 gap-y-4 sm:gap-x-8"
           aria-hidden="true"
         >
           {GROUPS.map(([s, e], gi) => (
@@ -753,15 +774,15 @@ export default function DrawTab() {
           ))}
         </div>
 
-        <div className="mt-10 flex min-h-24 items-center justify-center px-4 text-center">
+        <div className="mt-12 flex min-h-32 items-center justify-center px-4 text-center">
           {stageResult ? (
             <p
               role="status"
-              className="draw-name-in text-3xl font-bold text-slate-900 sm:text-4xl"
+              className="draw-name-in text-4xl font-bold text-slate-900 sm:text-5xl"
             >
-              <IconSparkle className="mr-2 inline h-7 w-7 text-amber-500 sm:h-8 sm:w-8" />
+              <IconSparkle className="mr-3 inline h-9 w-9 text-amber-500 sm:h-10 sm:w-10" />
               {displayName(stageResult)}
-              <IconSparkle className="ml-2 inline h-7 w-7 text-amber-500 sm:h-8 sm:w-8" />
+              <IconSparkle className="ml-3 inline h-9 w-9 text-amber-500 sm:h-10 sm:w-10" />
             </p>
           ) : (
             <p className="text-sm font-medium text-slate-300">
@@ -900,37 +921,37 @@ export default function DrawTab() {
           aria-modal="true"
           aria-label={`ผู้ชนะการสุ่ม ${displayName(winner)}`}
         >
-          <div className="modal-card w-full max-w-md rounded-3xl bg-white p-8 text-center shadow-xl">
-            <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-amber-100 text-amber-600">
-              <IconSparkle className="h-9 w-9" />
+          <div className="modal-card w-full max-w-2xl rounded-3xl bg-white p-10 text-center shadow-xl sm:p-12">
+            <span className="mx-auto flex h-24 w-24 items-center justify-center rounded-full bg-amber-100 text-amber-600">
+              <IconSparkle className="h-14 w-14" />
             </span>
-            <p className="mt-4 text-sm font-bold uppercase tracking-widest text-sky-700">
+            <p className="mt-5 text-base font-bold uppercase tracking-[0.25em] text-sky-700">
               ผู้ชนะการสุ่ม
             </p>
-            <p className="mt-2 text-3xl font-bold text-slate-900 sm:text-4xl">
+            <p className="mt-3 text-5xl font-bold text-slate-900 sm:text-6xl">
               {displayName(winner)}
             </p>
-            <p className="tnum mt-2 font-mono text-lg tracking-wider text-slate-400">
+            <p className="tnum mt-3 font-mono text-2xl tracking-wider text-slate-400">
               {winner.student_id}
             </p>
-            <div className="mt-8 flex flex-col gap-4 sm:flex-row sm:justify-between">
+            <div className="mt-10 flex flex-col gap-4 sm:flex-row sm:justify-between">
               <button
                 onClick={dropWinner}
-                className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border-2 border-red-200 bg-white px-5 py-3 font-semibold text-red-700 transition-all hover:bg-red-50 active:scale-95"
+                className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-2xl border-2 border-red-200 bg-white px-8 py-4 text-lg font-semibold text-red-700 transition-all hover:bg-red-50 active:scale-95"
               >
-                <IconTrash className="h-5 w-5" />
+                <IconTrash className="h-6 w-6" />
                 ลบออก
               </button>
               <button
                 autoFocus
                 onClick={keepWinner}
-                className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-5 py-3 font-semibold text-white transition-all hover:bg-slate-700 active:scale-95"
+                className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-2xl bg-slate-900 px-8 py-4 text-lg font-semibold text-white transition-all hover:bg-slate-700 active:scale-95"
               >
-                <IconCheck className="h-5 w-5" />
+                <IconCheck className="h-6 w-6" />
                 เก็บไว้
               </button>
             </div>
-            <p className="mt-4 text-xs text-slate-400">
+            <p className="mt-5 text-sm text-slate-400">
               ลบออก = ตัดชื่อนี้ออกจากวงสุ่มถาวร • เก็บไว้ = ยังอยู่ในวงสุ่ม
               สุ่มซ้ำได้
             </p>
