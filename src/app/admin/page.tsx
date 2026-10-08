@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import DrawTab from "./draw-tab";
 import SeatingTab from "./seating-tab";
+import { parseRoster } from "@/lib/parse-roster";
 
 type TodayRow = { id: number; student_id: string; name: string; time: string };
 type Student = { student_id: string; name: string; created_at: string };
@@ -148,7 +149,22 @@ export default function AdminPage() {
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [pasteText, setPasteText] = useState("");
+  const [pasteMsg, setPasteMsg] = useState<string | null>(null);
+  const [pasteOk, setPasteOk] = useState<boolean | null>(null);
+  const [pasteBusy, setPasteBusy] = useState(false);
+  const pasteParsed = useMemo(() => parseRoster(pasteText), [pasteText]);
+  const studentIds = useMemo(
+    () => new Set(students.map((s) => s.student_id)),
+    [students]
+  );
+  const pasteNewRows = useMemo(
+    () => pasteParsed.rows.filter((r) => !studentIds.has(r.studentId)),
+    [pasteParsed, studentIds]
+  );
+
   const [missingRows, setMissingRows] = useState<MissingRow[]>([]);
+  const [rosterCopyMsg, setRosterCopyMsg] = useState<string | null>(null);
 
   const [expFrom, setExpFrom] = useState("");
   const [expTo, setExpTo] = useState("");
@@ -286,6 +302,42 @@ export default function AdminPage() {
       setCsvMsg(data.error ?? "นำเข้าไม่สำเร็จ");
     }
     if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  async function importPaste() {
+    if (pasteParsed.rows.length === 0) return;
+    setPasteBusy(true);
+    setPasteMsg(null);
+    setPasteOk(null);
+    const res = await fetch("/api/students/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ csv: pasteText }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      setPasteOk(true);
+      setPasteMsg(`อ่านได้ ${data.parsed} แถว เพิ่มใหม่ ${data.added} ข้ามซ้ำ ${data.skipped}`);
+      setPasteText("");
+      await loadStudents();
+    } else {
+      setPasteOk(false);
+      setPasteMsg(data.error ?? "นำเข้าไม่สำเร็จ");
+    }
+    setPasteBusy(false);
+  }
+
+  async function copyRoster() {
+    if (students.length === 0) return;
+    const text = students
+      .map((s) => `${s.student_id}, ${s.name}`)
+      .join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      setRosterCopyMsg(`คัดลอก ${students.length} รายชื่อแล้ว`);
+    } catch {
+      setRosterCopyMsg("คัดลอกไม่ได้ — เลือกข้อความในกล่องแล้วกด Cmd+C เอง");
+    }
   }
 
   const tabBtn = (t: Tab, label: string) => (
@@ -426,6 +478,113 @@ export default function AdminPage() {
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="mb-1 flex items-center gap-2 text-lg font-semibold text-slate-900">
+              <IconClipboard className="h-5 w-5 text-sky-700" />
+              วางข้อความรายชื่อ (อ่านอัตโนมัติ)
+            </h2>
+            <p className="mb-4 text-sm text-slate-500">
+              วางจาก Excel หรือข้อความได้เลย — ระบบหารหัสกับชื่อเอง (tab,
+              เว้นวรรค, คอมม่า หรือชื่อนำหน้ารหัส ก็ได้)
+            </p>
+            <label className="sr-only" htmlFor="paste-roster">
+              ข้อความรายชื่อ
+            </label>
+            <textarea
+              id="paste-roster"
+              value={pasteText}
+              onChange={(e) => {
+                setPasteText(e.target.value);
+                setPasteMsg(null);
+                setPasteOk(null);
+              }}
+              rows={7}
+              spellCheck={false}
+              placeholder={"69040249101\tนางสาว พิชญญาดา ดวงศรี\n69040249102\tนาย กฤษมานนท์ บุญสิทธิ์"}
+              className="tnum w-full resize-y rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-mono text-sm leading-relaxed outline-none transition-colors focus:border-sky-600"
+            />
+            {pasteText.trim() !== "" && (
+              <div className="mt-3 rounded-xl bg-slate-50 px-4 py-3 text-sm ring-1 ring-slate-200">
+                <p className="font-medium text-slate-700">
+                  ตรวจแล้ว: พบ {pasteParsed.rows.length} รายชื่อ — ใหม่{" "}
+                  {pasteNewRows.length}
+                  {pasteParsed.rows.length !== pasteNewRows.length && (
+                    <span className="ml-1 text-slate-500">
+                      · ซ้ำในทะเบียน{" "}
+                      {pasteParsed.rows.length - pasteNewRows.length} (ข้าม)
+                    </span>
+                  )}
+                  {pasteParsed.bad.length > 0 && (
+                    <span className="ml-2 text-amber-700">
+                      ข้าม {pasteParsed.bad.length} แถวที่อ่านไม่ออก
+                      {pasteParsed.bad.length <= 3 && (
+                        <span className="font-normal">
+                          {" "}
+                          (เช่น {pasteParsed.bad.join(", ")})
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </p>
+                {pasteParsed.rows.length > 0 && (
+                  <ul className="mt-2 space-y-1 text-xs text-slate-500">
+                    {pasteParsed.rows.slice(0, 4).map((r) => (
+                      <li key={r.studentId} className="tnum font-mono">
+                        {r.studentId} — {r.name}
+                        {studentIds.has(r.studentId) && (
+                          <span className="ml-2 rounded bg-slate-200 px-1.5 py-0.5 font-sans text-[11px] font-semibold text-slate-600">
+                            ซ้ำ — ข้าม
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                    {pasteParsed.rows.length > 4 && (
+                      <li>…และอีก {pasteParsed.rows.length - 4} แถว</li>
+                    )}
+                  </ul>
+                )}
+              </div>
+            )}
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <button
+                onClick={() => void importPaste()}
+                disabled={pasteBusy || pasteNewRows.length === 0}
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-slate-900 px-5 py-2.5 font-semibold text-white transition-all hover:bg-slate-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <IconPlus className="h-4 w-4" />
+                นำเข้า{" "}
+                {pasteNewRows.length > 0
+                  ? `${pasteNewRows.length} รายชื่อใหม่`
+                  : pasteParsed.rows.length > 0
+                    ? " (ซ้ำหมดแล้ว)"
+                    : ""}
+              </button>
+              {pasteText.trim() !== "" && (
+                <button
+                  onClick={() => {
+                    setPasteText("");
+                    setPasteMsg(null);
+                    setPasteOk(null);
+                  }}
+                  className="cursor-pointer rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+                >
+                  ล้าง
+                </button>
+              )}
+            </div>
+            {pasteMsg && (
+              <p
+                role="status"
+                className={`mt-3 flex items-center gap-1.5 text-sm font-medium ${
+                  pasteOk ? "text-emerald-700" : "text-red-700"
+                }`}
+              >
+                {pasteOk && <IconCheck className="h-4 w-4" />}
+                {pasteMsg}
+              </p>
+            )}
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-slate-900">
               <IconUpload className="h-5 w-5 text-sky-700" />
               นำเข้าจากไฟล์ CSV
@@ -500,10 +659,25 @@ export default function AdminPage() {
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-slate-900">
-              <IconUsers className="h-5 w-5 text-sky-700" />
-              ทะเบียนทั้งหมด ({students.length} คน)
-            </h2>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-900">
+                <IconUsers className="h-5 w-5 text-sky-700" />
+                ทะเบียนทั้งหมด ({students.length} คน)
+              </h2>
+              <button
+                onClick={() => void copyRoster()}
+                disabled={students.length === 0}
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <IconClipboard className="h-4 w-4" />
+                คัดลอกทั้งหมด
+              </button>
+            </div>
+            {rosterCopyMsg && (
+              <p role="status" className="mb-3 text-sm font-medium text-emerald-700">
+                {rosterCopyMsg}
+              </p>
+            )}
             {students.length === 0 ? (
               <EmptyState
                 icon={<IconUsers />}
