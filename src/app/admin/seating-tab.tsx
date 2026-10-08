@@ -118,6 +118,24 @@ function IconGrid({ className = "" }: { className?: string }) {
   );
 }
 
+function IconDownload({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+    </svg>
+  );
+}
+
+function IconImage({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <circle cx="9" cy="9" r="2" />
+      <path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21" />
+    </svg>
+  );
+}
+
 const displayName = (name: string | undefined, id: string) => name || id;
 
 function TableCircle({
@@ -615,6 +633,168 @@ export default function SeatingTab() {
     setAssignments({});
   }
 
+  // ส่งออก CSV พร้อม import เข้า Excel/Google Sheets:
+  // คอลัมน์ = โต๊ะ (เรียงเลขโต๊ะ) แถว = ที่นั่ง 1-8 เซลล์ = "ชื่อ รหัส"
+  // BOM + CRLF ให้ Excel อ่านภาษาไทย/ขึ้นบรรทัดถูกต้อง
+  function exportCsv() {
+    const esc = (c: string) => `"${c.replace(/"/g, '""')}"`;
+    const rows: string[][] = [tableNos.map((t) => `โต๊ะ ${t}`)];
+    for (let s = 1; s <= SEATS; s++) {
+      rows.push(
+        tableNos.map((t) => {
+          const id = assignments[`${t}:${s}`];
+          if (!id) return "";
+          const name = nameById.get(id);
+          return name ? `${name} ${id}` : id;
+        })
+      );
+    }
+    const csv =
+      "\uFEFF" + rows.map((r) => r.map(esc).join(",")).join("\r\n");
+    const url = URL.createObjectURL(
+      new Blob([csv], { type: "text/csv;charset=utf-8;" })
+    );
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `ที่นั่ง-${label || "แผน"}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // ส่งออกแผนที่เป็น PNG — วาดใหม่ลง canvas ตรง ๆ ตามเรขาคณิตเดียวกับ renderCanvas
+  // (วงกลม inset-16 → r=TW/2-16, ที่นั่งห่างจากจุดศูนย์กลาง 122px มุม i*45°−90° วัดจากแนวตั้ง)
+  // ไม่ใช้ html2canvas เพราะ Tailwind v4 ใช้สี oklch ซึ่ง lib นั้นอ่านไม่ได้
+  function exportPng() {
+    if (tableNos.length === 0) {
+      alert("ยังไม่มีโต๊ะในแผนนี้ — รอแผนโหลดเสร็จก่อนหรือเพิ่มโต๊ะก่อนส่งออก");
+      return;
+    }
+    const W = CANVAS_W;
+    const H = canvasH;
+    // Safari ลิมิตพื้นที่ canvas ~16.7M px — เกินแล้ว toBlob ได้ภาพเปล่า ๆ เงียบ ๆ
+    // เลยกาง scale ให้ต่ำสุดเท่าที่จำเป็น (สูงสุด 2x เมื่อพอ)
+    const SCALE = Math.min(2, Math.sqrt(15_000_000 / (W * H)));
+    const cv = document.createElement("canvas");
+    cv.width = W * SCALE;
+    cv.height = H * SCALE;
+    const ctx = cv.getContext("2d");
+    if (!ctx) return;
+    ctx.scale(SCALE, SCALE);
+
+    // พื้นหลัง + จุดตารางเลียนแบบหน้าจอ
+    ctx.fillStyle = "#f8fafc";
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#e2e8f0";
+    for (let gy = 14; gy < H; gy += 28)
+      for (let gx = 14; gx < W; gx += 28) {
+        ctx.beginPath();
+        ctx.arc(gx, gy, 1.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+    // เวทีกลางบน
+    const stW = 460;
+    const stH = 144;
+    const stX = (W - stW) / 2;
+    const grad = ctx.createLinearGradient(0, 0, 0, stH);
+    grad.addColorStop(0, "#ffffff");
+    grad.addColorStop(1, "#f1f5f9");
+    ctx.fillStyle = grad;
+    ctx.strokeStyle = "#cbd5e1";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(stX, 0, stW, stH, 16);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#64748b";
+    ctx.font = 'bold 30px "Anuphan", sans-serif';
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("เวที", W / 2, stH / 2 - 12);
+    ctx.fillStyle = "#cbd5e1";
+    ctx.font = 'bold 10px "Anuphan", sans-serif';
+    ctx.fillText("S T A G E", W / 2, stH / 2 + 20);
+
+    const fitText = (text: string, max: number) => {
+      if (ctx.measureText(text).width <= max) return text;
+      let t = text;
+      while (t.length > 3 && ctx.measureText(t + "…").width > max)
+        t = t.slice(0, -1);
+      return t + "…";
+    };
+
+    for (const t of tableNos) {
+      const pos = layout[t];
+      const cx = pos.x + TW / 2;
+      const cy = pos.y + TW / 2;
+
+      // วงกลมโต๊ะก่อน แล้วค่อยแคปซูลที่นั่งทับบน (ลำดับชั้นเหมือน DOM)
+      ctx.beginPath();
+      ctx.arc(cx, cy, TW / 2 - 16, 0, Math.PI * 2);
+      ctx.fillStyle = "#ffffff";
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "#e2e8f0";
+      ctx.stroke();
+      const seated = Array.from({ length: SEATS }, (_, i) => i + 1).filter(
+        (s) => assignments[`${t}:${s}`]
+      ).length;
+      ctx.fillStyle = "#0f172a";
+      ctx.font = 'bold 36px "Anuphan", sans-serif';
+      ctx.fillText(String(t), cx, cy - 8);
+      ctx.fillStyle = "#94a3b8";
+      ctx.font = 'bold 12px "Anuphan", sans-serif';
+      ctx.fillText(`${seated}/${SEATS}`, cx, cy + 22);
+
+      for (let i = 0; i < SEATS; i++) {
+        const s = i + 1;
+        const a = ((i * 45 - 90) * Math.PI) / 180;
+        const px = cx + 122 * Math.sin(a);
+        const py = cy - 122 * Math.cos(a);
+        const id = assignments[`${t}:${s}`] ?? null;
+        const pw = 88;
+        const ph = 36;
+        ctx.beginPath();
+        ctx.roundRect(px - pw / 2, py - ph / 2, pw, ph, ph / 2);
+        if (id) {
+          ctx.fillStyle = "#e0f2fe";
+          ctx.fill();
+          ctx.setLineDash([]);
+          ctx.strokeStyle = "#bae6fd";
+          ctx.stroke();
+          ctx.fillStyle = "#0c4a6e";
+          ctx.font = 'bold 13px "Anuphan", sans-serif';
+          const name = nameById.get(id);
+          ctx.fillText(
+            fitText(name ? name : id, pw - 10),
+            px,
+            py + 1
+          );
+        } else {
+          ctx.fillStyle = "#f8fafc";
+          ctx.fill();
+          ctx.setLineDash([5, 4]);
+          ctx.strokeStyle = "#e2e8f0";
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = "#cbd5e1";
+          ctx.font = 'bold 14px "Anuphan", sans-serif';
+          ctx.fillText(String(s), px, py + 1);
+        }
+      }
+    }
+
+    cv.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `แผนที่นั่ง-${label || "แผน"}.png`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }, "image/png");
+  }
+
   // Esc: ปิดเต็มจอ → ยกเลิกการวาง → ปิด popup แผนใหม่
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -834,6 +1014,20 @@ export default function SeatingTab() {
             className="cursor-pointer rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
           >
             ล้างที่นั่งทั้งหมด
+          </button>
+          <button
+            onClick={exportCsv}
+            className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+          >
+            <IconDownload className="h-4 w-4" />
+            ส่งออก CSV
+          </button>
+          <button
+            onClick={exportPng}
+            className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+          >
+            <IconImage className="h-4 w-4" />
+            ส่งออกรูปแผนที่
           </button>
           <button
             onClick={() => {
